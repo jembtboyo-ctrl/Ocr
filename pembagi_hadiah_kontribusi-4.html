@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Team Reward Calculator</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#f4f6f8;color:#17212b}
+.wrap{max-width:1050px;margin:auto;padding:14px}
+.card{background:#fff;border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:0 3px 16px #0001}
+h1{margin:0 0 5px;font-size:23px}.sub{color:#66727e;font-size:14px}
+.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.field{min-width:180px;flex:1}
+label{display:block;font-weight:700;font-size:13px;margin-bottom:6px}
+input{width:100%;padding:11px;border:1px solid #ccd3da;border-radius:10px;font-size:16px}
+button{border:0;border-radius:10px;padding:11px 14px;font-weight:700;background:#1769e0;color:white;cursor:pointer}
+button.gray{background:#e8edf2;color:#17212b} button.red{background:#d9363e}
+.upload{border:2px dashed #aeb8c2;border-radius:14px;padding:25px;text-align:center;cursor:pointer}
+.upload b{font-size:17px}.hint{font-size:12px;color:#687580;margin-top:7px}
+.previewbox{display:none;margin-top:12px;text-align:center}
+#preview{max-width:100%;max-height:430px;border-radius:10px}
+.tools{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+.status{font-size:13px;color:#586570;margin-top:9px;line-height:1.4}
+.progress{height:9px;background:#e8edf1;border-radius:99px;overflow:hidden;margin-top:10px;display:none}
+#bar{height:100%;width:0;background:#1769e0}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{padding:9px 7px;border-bottom:1px solid #e5e9ed}
+th{background:#f1f4f7;text-align:left} .num{text-align:right}
+td input{padding:8px}
+.total{font-weight:800}
+.empty{text-align:center;color:#73808b;padding:28px}
+.note{font-size:12px;color:#66727e;line-height:1.5}
+.badge{font-size:12px;background:#eaf2ff;color:#1557a6;border-radius:20px;padding:4px 8px}
+@media(max-width:650px){h1{font-size:20px}table{font-size:12px}th,td{padding:7px 4px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="card">
+<h1>🎁 Pembagi Hadiah Tim</h1>
+<div class="sub">Setiap tim cukup upload screenshot tabel kontribusi. Tidak perlu memasukkan nama dan poin satu per satu.</div>
+<br>
+<div class="controls">
+<div class="field"><label>Total hadiah (Gold)</label><input id="reward" type="number" min="1" value="500"></div>
+<button onclick="document.getElementById('file').click()">📷 Upload Screenshot</button>
+<button class="gray" onclick="addRow()">+ Tambah Manual</button>
+<button class="gray" onclick="clearAll()">Reset</button>
+</div>
+</div>
+
+<div class="card">
+<input id="file" type="file" accept="image/*" hidden>
+<div id="drop" class="upload" onclick="document.getElementById('file').click()">
+<b>📷 Upload screenshot tabel</b>
+<div class="hint">JPG, PNG, WEBP. Mendukung poin 2–3 digit maupun ribuan seperti 270, 826, 1.155. Screenshot boleh miring.</div>
+</div>
+<div class="previewbox" id="previewbox">
+<img id="preview">
+<div class="tools">
+<button class="gray" onclick="rotate(-90)">↶ Putar kiri</button>
+<button class="gray" onclick="rotate(90)">↷ Putar kanan</button>
+<button onclick="runOCR()">🔎 Baca gambar</button>
+</div>
+</div>
+<div class="progress" id="progress"><div id="bar"></div></div>
+<div class="status" id="status"></div>
+</div>
+
+<div class="card">
+<div class="controls" style="justify-content:space-between">
+<div><b>Hasil pembacaan</b> <span class="badge" id="count">0 pemain</span></div>
+<button onclick="calculate()">💰 Hitung hadiah</button>
+</div>
+<div style="overflow-x:auto">
+<table>
+<thead><tr><th>No</th><th>Nama</th><th class="num">Poin</th><th class="num">Kontribusi</th><th class="num">Gold</th><th></th></tr></thead>
+<tbody id="tbody"><tr><td colspan="6" class="empty">Upload screenshot untuk memulai.</td></tr></tbody>
+<tfoot><tr class="total"><td colspan="2">TOTAL</td><td class="num" id="totalPoints">0</td><td class="num" id="totalPct">0%</td><td class="num" id="totalGold">0</td><td></td></tr></tfoot>
+</table>
+</div>
+<p class="note"><b>Rumus:</b> Gold = (Poin pemain ÷ Total semua poin) × Total hadiah.<br>
+Pembulatan memakai sisa terbesar agar jumlah akhir tetap sama dengan total hadiah.</p>
+</div>
+</div>
+
+<script>
+let players=[], sourceFile=null, angle=0, currentImage=null;
+
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
+const fmt=n=>new Intl.NumberFormat("id-ID").format(n);
+
+$("file").addEventListener("change",e=>{
+ const f=e.target.files[0]; if(!f)return;
+ sourceFile=f; angle=0;
+ const url=URL.createObjectURL(f);
+ $("preview").src=url; $("previewbox").style.display="block";
+ $("status").textContent="Gambar siap. Tekan “Baca gambar”.";
+});
+
+function rotate(deg){angle=(angle+deg+360)%360; $("preview").style.transform=`rotate(${angle}deg)`;}
+
+function addRow(name="",points=0){players.push({name,points:Number(points)||0});render();}
+
+function removeRow(i){players.splice(i,1);render();}
+
+function clearAll(){
+ players=[]; sourceFile=null; angle=0;
+ $("file").value=""; $("preview").src=""; $("previewbox").style.display="none";
+ $("status").textContent=""; $("progress").style.display="none";
+ render();
+}
+
+function render(){
+ const tb=$("tbody");
+ if(!players.length) tb.innerHTML='<tr><td colspan="6" class="empty">Belum ada data. Upload screenshot atau tambah manual.</td></tr>';
+ else tb.innerHTML=players.map((p,i)=>`
+ <tr>
+ <td>${i+1}</td>
+ <td><input value="${esc(p.name)}" oninput="players[${i}].name=this.value"></td>
+ <td class="num"><input type="number" min="0" value="${p.points}" oninput="players[${i}].points=Number(this.value)||0" style="max-width:130px;text-align:right"></td>
+ <td class="num" id="pct${i}">0%</td>
+ <td class="num" id="gold${i}">0</td>
+ <td><button class="red" onclick="removeRow(${i})">×</button></td>
+ </tr>`).join("");
+ $("count").textContent=players.length+" pemain";
+ calculate();
+}
+
+function calculate(){
+ const total=players.reduce((s,p)=>s+(Number(p.points)||0),0);
+ const pot=Math.max(0,Math.round(Number($("reward").value)||0));
+ $("totalPoints").textContent=fmt(total);
+ if(!total){
+   players.forEach((p,i)=>{if($("pct"+i))$("pct"+i).textContent="0%";if($("gold"+i))$("gold"+i).textContent="0"});
+   $("totalPct").textContent="0%";$("totalGold").textContent="0";return;
+ }
+ const raw=players.map(p=>(Number(p.points)||0)/total*pot);
+ const gold=raw.map(Math.floor);
+ let left=pot-gold.reduce((a,b)=>a+b,0);
+ const order=raw.map((x,i)=>({i,f:x-Math.floor(x)})).sort((a,b)=>b.f-a.f);
+ for(let i=0;i<left;i++) if(order[i])gold[order[i].i]++;
+ players.forEach((p,i)=>{
+   $("pct"+i).textContent=((p.points/total)*100).toFixed(2)+"%";
+   $("gold"+i).textContent=gold[i];
+ });
+ $("totalPct").textContent="100%"; $("totalGold").textContent=gold.reduce((a,b)=>a+b,0);
+}
+$("reward").addEventListener("input",calculate);
+
+async function loadTesseract(){
+ if(window.Tesseract)return window.Tesseract;
+ $("status").textContent="Menyiapkan mesin pembaca gambar…";
+ await new Promise((resolve,reject)=>{
+   const s=document.createElement("script");
+   s.src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+   s.onload=resolve;s.onerror=reject;document.head.appendChild(s);
+ });
+ return window.Tesseract;
+}
+
+function canvasFromImage(img,deg=0,scale=2){
+ const c=document.createElement("canvas"), ctx=c.getContext("2d");
+ const r=deg%180!==0;
+ c.width=(r?img.height:img.width)*scale;c.height=(r?img.width:img.height)*scale;
+ ctx.translate(c.width/2,c.height/2);ctx.rotate(deg*Math.PI/180);
+ ctx.drawImage(img,-img.width*scale/2,-img.height*scale/2,img.width*scale,img.height*scale);
+ return c;
+}
+
+function cleanText(text){
+ return text.replace(/\r/g,"\n").split(/\n+/).map(x=>x.trim()).filter(Boolean);
+}
+
+function parseLines(text){
+ const lines=cleanText(text), out=[];
+ for(const line of lines){
+   // Terima SEMUA poin 1-7 digit, termasuk 2-3 digit seperti 270, 483, 826.
+   // Format ribuan seperti 1.155 / 1,155 juga diterima.
+   const matches=[...line.matchAll(/(?:^|[\s|])(\d{1,3}(?:[.,]\d{3})+|\d{1,7})(?=$|[\s|])/g)];
+   if(!matches.length)continue;
+
+   // Ambil angka terakhir pada baris karena biasanya kolom poin berada di kanan.
+   const raw=matches[matches.length-1][1];
+   const points=parseInt(raw.replace(/[.,]/g,""),10);
+   if(!Number.isFinite(points)||points<1)continue;
+
+   let name=line.replace(raw,"").replace(/^[\s\d|._\-–—]+/,"").trim();
+   name=name.replace(/\s{2,}/g," ").trim();
+
+   // Jika OCR hanya menemukan angka tanpa nama, tetap masukkan sebagai pemain
+   // sementara agar poin 2-3 digit tidak hilang. Nama dapat diedit kemudian.
+   if(!name || /^(rank|no|name|points?|point|tournament|fighter|commander|weight|total|gold|contribution)$/i.test(name)){
+     name="Pemain "+(out.length+1);
+   }
+
+   // Hindari baris header yang mengandung angka tetapi bukan poin.
+   if(/^(rank|no|name|points?|point|total|gold|contribution)$/i.test(name))continue;
+
+   if(!out.some(x=>x.name.toLowerCase()===name.toLowerCase()&&x.points===points))
+      out.push({name,points});
+ }
+ return out;
+}
+
+async function runOCR(){
+ if(!sourceFile){$("status").textContent="Upload screenshot terlebih dahulu.";return;}
+ try{
+  const T=await loadTesseract();
+  const img=new Image();
+  img.onload=async()=>{
+   $("progress").style.display="block";$("bar").style.width="5%";
+   $("status").textContent="Membaca screenshot…";
+   const angles=[angle,(angle+90)%360,(angle+270)%360];
+   let best=[],bestScore=-1;
+   for(let k=0;k<angles.length;k++){
+     const c=canvasFromImage(img,angles[k],1.7);
+     const res=await T.recognize(c,"eng",{logger:m=>{
+       if(m.status==="recognizing text") $("bar").style.width=(5+((k+m.progress)/angles.length)*90)+"%";
+     }});
+     const found=parseLines(res.data.text);
+     // Skor: utamakan jumlah baris yang punya nama + angka.
+     const score=found.length*10+res.data.confidence/100;
+     if(score>bestScore){best=found;bestScore=score;}
+   }
+   players=best;
+   render();
+   $("bar").style.width="100%";
+   $("status").textContent=best.length
+    ? `Selesai. ${best.length} pemain terdeteksi. Periksa hasil OCR sebelum menghitung.`
+    : "Belum berhasil membaca nama + poin. Putar gambar lalu tekan “Baca gambar”, atau masukkan data manual.";
+  };
+  img.src=URL.createObjectURL(sourceFile);
+ }catch(e){
+  console.error(e);
+  $("status").textContent="Mesin OCR tidak dapat dimuat. Pastikan internet aktif, lalu coba lagi.";
+  $("progress").style.display="none";
+ }
+}
+render();
+</script>
+</body>
+</html>
